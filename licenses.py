@@ -4,10 +4,14 @@ import subprocess
 import typing
 
 
-def parse_pkgs_go_mod(
-    fp: str, ignores: list[str] | None = None
-) -> list[tuple[str, str, str]]:
-    pkgs = []
+class GoPkg(typing.NamedTuple):
+    name: str
+    version: str
+    tag: str
+
+
+def parse_pkgs_go_mod(fp: str, ignores: list[str] | None = None) -> list[GoPkg]:
+    pkgs: list[GoPkg] = []
 
     def append_pkg(line: str):
         indirect = line.endswith("// indirect")
@@ -20,7 +24,9 @@ def parse_pkgs_go_mod(
         if ignores and pkg in ignores:
             return
 
-        pkgs.append((pkg, parts[1], "indirect" if indirect else "direct"))
+        pkgs.append(
+            GoPkg(name=pkg, version=parts[1], tag="indirect" if indirect else "direct")
+        )
 
     in_require = False
 
@@ -93,9 +99,12 @@ def fetch_go_pkg_license_via_network(pkg: str, ver: str) -> str | None:
     raise NotImplementedError
 
 
-def parse_npm_package_json(
-    fp: str, ignores: list[str] | None = None
-) -> list[tuple[str, str]]:
+class NpmPkg(typing.NamedTuple):
+    name: str
+    tag: str
+
+
+def parse_npm_package_json(fp: str, ignores: list[str] | None = None) -> list[NpmPkg]:
     with open(fp, "r") as f:
         info = json.load(f)
         deps = info.get("dependencies", [])
@@ -105,12 +114,12 @@ def parse_npm_package_json(
         for name in deps.keys():
             if ignores and name in ignores:
                 continue
-            pkgs.append((name, "deps"))
+            pkgs.append(NpmPkg(name=name, tag="deps"))
 
         for name in dev_deps.keys():
             if ignores and name in ignores:
                 continue
-            pkgs.append((name, "dev-deps"))
+            pkgs.append(NpmPkg(name=name, tag="dev-deps"))
 
         return pkgs
 
@@ -148,7 +157,7 @@ def find_npm_pkg_license_via_network(pkg: str) -> str | None:
 
 
 LINCESE_SEQ = 1
-ALL_LICENSES = {}
+ALL_LICENSES: dict[str, int] = {}
 
 
 def read_license(fp: str) -> int:
@@ -175,8 +184,16 @@ def main(
     ignore_go_pkgs: list[str] | None = None,
     ignore_npm_pkgs: list[str] | None = None,
 ):
-    go_pkgs = []
-    npm_pkgs = []
+    class GoItem(typing.NamedTuple):
+        pkg: GoPkg
+        licidx: int
+
+    class NpmItem(typing.NamedTuple):
+        pkg: NpmPkg
+        licidx: int
+
+    go_pkgs: list[GoItem] = []
+    npm_pkgs: list[NpmItem] = []
 
     for fp in files:
         if not os.path.isfile(fp):
@@ -184,29 +201,28 @@ def main(
             continue
 
         if fp.endswith("go.mod"):
-            for pkg, ver, tag in parse_pkgs_go_mod(fp, ignores=ignore_go_pkgs):
-                lic = find_go_pkg_license_via_fs(pkg, ver)
+            for pkg in parse_pkgs_go_mod(fp, ignores=ignore_go_pkgs):
+                lic = find_go_pkg_license_via_fs(pkg.name, pkg.version)
                 if not lic:
-                    lic = fetch_go_pkg_license_via_network(pkg, ver)
+                    lic = fetch_go_pkg_license_via_network(pkg.name, pkg.version)
                     if not lic:
-                        print(f"go pkg license not found: {pkg}@{ver}")
+                        print(f"go pkg license not found: {pkg.name}@{pkg.version}")
                         continue
 
-                go_pkgs.append((pkg, read_license(lic), tag))
+                go_pkgs.append(GoItem(pkg, read_license(lic)))
 
         elif fp.endswith("package.json"):
-            for pkg, tag in parse_npm_package_json(fp, ignores=ignore_npm_pkgs):
-                lic = find_npm_pkg_license_via_fs(fp, pkg)
+            for pkg in parse_npm_package_json(fp, ignores=ignore_npm_pkgs):
+                lic = find_npm_pkg_license_via_fs(fp, pkg.name)
                 if not lic:
-                    lic = find_npm_pkg_license_via_network(pkg)
+                    lic = find_npm_pkg_license_via_network(pkg.name)
                     if not lic:
-                        print(f"npm pkg license not found: {pkg}")
+                        print(f"npm pkg license not found: {pkg.name}")
                         continue
 
-                npm_pkgs.append((pkg, read_license(lic), tag))
+                npm_pkgs.append(NpmItem(pkg, read_license(lic)))
 
-    lics = {}
-
+    lics: dict[int, str] = {}
     for lic, lic_id in ALL_LICENSES.items():
         lics[lic_id] = lic
 
@@ -222,10 +238,10 @@ def main(
     with open(f"{output}/opensource.deps.html", "w", encoding="utf-8") as f:
         f.write("<h2>Go Modules</h2>\n")
         f.write("<ul>\n")
-        for pkg, lic_id, tag in go_pkgs:
+        for item in go_pkgs:
             f.write(
-                f'''<li data-lic="{lic_id}" data-tag="{tag}" data-kind="go">
-    <span>{pkg}</span>
+                f'''<li data-lic="{item.licidx}" data-tag="{item.pkg.tag}" data-kind="go">
+    <span>{item.pkg.name}</span>
     <span class="btn">show license</span>
     <span class="btn">web page</span>
 </li>
@@ -236,10 +252,10 @@ def main(
 
         f.write("<h2>NPM Modules</h2>\n")
         f.write("<ul>\n")
-        for pkg, lic_id, tag in npm_pkgs:
+        for item in npm_pkgs:
             f.write(
-                f'''<li data-lic="{lic_id}" data-tag="{tag}" data-kind="npm">
-    <span>{pkg}</span>
+                f'''<li data-lic="{item.licidx}" data-tag="{item.pkg.tag}" data-kind="npm">
+    <span>{item.pkg.name}</span>
     <span class="btn">show license</span>
     <span class="btn">web page</span>
 </li>
@@ -247,6 +263,7 @@ def main(
             )
             pidx += 1
         f.write("</ul>\n")
+        f.write('<p class="notice">Praise the Sun, Praise Open Source. ☀️</p>\n')
 
 
 if __name__ == "__main__":
