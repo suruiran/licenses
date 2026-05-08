@@ -104,7 +104,11 @@ class NpmPkg(typing.NamedTuple):
     tag: str
 
 
-def parse_npm_package_json(fp: str, ignores: list[str] | None = None) -> list[NpmPkg]:
+def parse_npm_package_json(
+    fp: str,
+    ignores: list[str] | None = None,
+    ignore_devdeps: bool | None = None,
+) -> list[NpmPkg]:
     with open(fp, "r") as f:
         info = json.load(f)
         deps = info.get("dependencies", [])
@@ -116,10 +120,13 @@ def parse_npm_package_json(fp: str, ignores: list[str] | None = None) -> list[Np
                 continue
             pkgs.append(NpmPkg(name=name, tag="deps"))
 
-        for name in dev_deps.keys():
-            if ignores and name in ignores:
-                continue
-            pkgs.append(NpmPkg(name=name, tag="dev-deps"))
+        if ignore_devdeps:
+            ...
+        else:
+            for name in dev_deps.keys():
+                if ignores and name in ignores:
+                    continue
+                pkgs.append(NpmPkg(name=name, tag="dev-deps"))
 
         return pkgs
 
@@ -183,6 +190,7 @@ def main(
     output: typing.Optional[str] = None,
     ignore_go_pkgs: list[str] | None = None,
     ignore_npm_pkgs: list[str] | None = None,
+    ignore_npm_devdeps: bool | None = None,
 ):
     class GoItem(typing.NamedTuple):
         pkg: GoPkg
@@ -212,7 +220,9 @@ def main(
                 go_pkgs.append(GoItem(pkg, read_license(lic)))
 
         elif fp.endswith("package.json"):
-            for pkg in parse_npm_package_json(fp, ignores=ignore_npm_pkgs):
+            for pkg in parse_npm_package_json(
+                fp, ignores=ignore_npm_pkgs, ignore_devdeps=ignore_npm_devdeps
+            ):
                 lic = find_npm_pkg_license_via_fs(fp, pkg.name)
                 if not lic:
                     lic = find_npm_pkg_license_via_network(pkg.name)
