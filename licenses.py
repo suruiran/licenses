@@ -114,7 +114,7 @@ def parse_npm_package_json(
         deps = info.get("dependencies", [])
         dev_deps = info.get("devDependencies", [])
 
-        pkgs = []
+        pkgs: list[NpmPkg] = []
         for name in deps.keys():
             if ignores and name in ignores:
                 continue
@@ -163,7 +163,7 @@ def find_npm_pkg_license_via_network(pkg: str) -> str | None:
     raise NotImplementedError
 
 
-LINCESE_SEQ = 1
+_license_seq = 1
 ALL_LICENSES: dict[str, int] = {}
 
 
@@ -177,10 +177,10 @@ def read_license(fp: str) -> int:
 
     lid = ALL_LICENSES.get(content)
     if not lid:
-        global LINCESE_SEQ
-        LINCESE_SEQ += 1
-        ALL_LICENSES[content] = LINCESE_SEQ
-        lid = LINCESE_SEQ
+        global _license_seq
+        _license_seq += 1
+        ALL_LICENSES[content] = _license_seq
+        lid = _license_seq
 
     return lid
 
